@@ -1,3 +1,13 @@
+# Note that this project was being worked on during what little free time I had outside of working or attending school. Doing both full-time inevitably led to extensive 
+# bloating, and frequent usage of code that just 'gets it done' instead of best practice.
+#
+# This is an example of the code used to create the workers responsible for processing the messages held in the queue. 10 or so workers operate in tandem receiving 
+# pickled data that's then unpacked and inserted into the database associated with the pickled object's symbol. Depending on how the data compares to the expected 
+# values defining an "erratic" entry the line may be flagged so that a different class, the one responsible for alerting the user to notable divergences from the expected, 
+# will find those flagged values as quickly as possible.
+
+
+
 import pika, sys, os
 import sqlite3
 import pickle
