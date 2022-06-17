@@ -1,0 +1,129 @@
+import pika, sys, os
+import sqlite3
+import pickle
+from datetime import datetime
+import math
+
+def main():
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()
+
+    channel.queue_declare(queue='bar', durable=False)
+
+    def callback(ch, method, properties, body):
+        new_entry_made = False
+        message = pickle.loads(body)
+        symbol = message['S']
+        open_price = message['o']
+        high_price = message['h']
+        low_price = message['l']
+        close_price = message['c']
+        volume = message['v']
+        now = datetime.now()
+        current_time_no_seconds = now.strftime("%H:%M")
+        conn = sqlite3.connect(f'stock_databases/stock_bar_databases/{symbol}.db'.format(symbol=symbol))
+        cur = conn.execute(f'select * from {symbol}'.format(symbol=symbol))
+        todays_values = cur.fetchall()
+        conn.close()
+        total_volume = todays_values[-1][6] + volume
+        previous_high = todays_values[-1][7]
+        if len(todays_values) > 1:
+            original_open = todays_values[1][1]
+        else:
+            original_open = open_price
+        if close_price > previous_high:
+            daily_high = high_price
+        else:
+            daily_high = previous_high
+        near_high = daily_high - (daily_high * 0.05)
+        database_dir = 'C:/Users/user/PycharmProjects/daily_stock_databases/'
+        database_folders = os.listdir(database_dir)
+        latest_databases = database_folders[-1]
+        latest_database_path = database_dir + latest_databases + '/stock_bar_databases/' + symbol + '.db'
+
+        try:
+            conn = sqlite3.connect(latest_database_path)
+            cur = conn.execute(f'select * from {symbol}'.format(symbol=symbol))
+            history_check = cur.fetchall()
+            conn.close()
+            close_yesterday = history_check[-1][4]
+
+            for comparisons in history_check:
+                if str(comparisons[0])[:5] == current_time_no_seconds:
+                    comparison_volume = comparisons[5]
+                    comparison_total_volume = comparisons[6]
+                    excessive_volume = total_volume / comparison_total_volume
+                    volume_diff = volume / comparison_volume
+                    current_minutes = int(str(current_time_no_seconds)[:2]) * 60 + int(str(current_time_no_seconds)[3:])
+                    cut_off_minutes = current_minutes - 5
+                    ranking = volume_diff * cut_off_minutes
+                    try:
+                        dynamax_volume = comparison_volume * 4
+                        if (volume > dynamax_volume) and (close_price >= near_high) and (close_price > original_open) and (close_price > close_yesterday) and (volume > 100000) and (close_price >= open_price):
+                            print('Got a live one.', symbol, ' is at least 4x the volume of this time yesterday as of ',current_time_no_seconds, '. Current volume', volume, ' against', comparison_volume, '.')
+                            print('Matching historical entry:', comparisons)
+                            print('Current entry:', (current_time_no_seconds, open_price, high_price, low_price, close_price, volume, total_volume, daily_high))
+                            watchlist_flag = 1
+                            conn = sqlite3.connect(f'C:/Users/user/PycharmProjects/Gringottsv4/stock_databases/stock_bar_databases/{symbol}.db'.format(symbol=symbol))
+                            cur = conn.cursor()
+                            new_entry = ('''INSERT OR IGNORE INTO {symbol} (Timestamp, Openprice, Highprice, Lowprice, Closeprice, Volume, Totalvolume, Dailyhigh, Watchlistflag, Volumediff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''.format(
+                                    symbol=symbol))
+                            cur.execute(new_entry, (current_time_no_seconds, open_price, high_price, low_price, close_price, volume, total_volume, daily_high, watchlist_flag, volume_diff))
+                            conn.commit()
+                            conn.close()
+                            new_entry_made = True
+                            continue
+
+                        else:
+                            watchlist_flag = 0
+                            conn = sqlite3.connect(f'C:/Users/user/PycharmProjects/Gringottsv4/stock_databases/stock_bar_databases/{symbol}.db'.format(symbol=symbol))
+                            cur = conn.cursor()
+                            new_entry = ('''INSERT OR IGNORE INTO {symbol} (Timestamp, Openprice, Highprice, Lowprice, Closeprice, Volume, Totalvolume, Dailyhigh, Watchlistflag, Volumediff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''.format(
+                                    symbol=symbol))
+                            cur.execute(new_entry, (current_time_no_seconds, open_price, high_price, low_price, close_price, volume, total_volume, daily_high, watchlist_flag, volume_diff))
+                            conn.commit()
+                            conn.close()
+                            new_entry_made = True
+
+                    except TypeError as e:
+                        print(e)
+                        pass
+
+            if new_entry_made == False:
+                watchlist_flag = 0
+                volume_diff = 0
+                conn = sqlite3.connect(f'C:/Users/user/PycharmProjects/Gringottsv4/stock_databases/stock_bar_databases/{symbol}.db'.format(symbol=symbol))
+                cur = conn.cursor()
+                new_entry = ('''INSERT OR IGNORE INTO {symbol} (Timestamp, Openprice, Highprice, Lowprice, Closeprice, Volume, Totalvolume, Dailyhigh, Watchlistflag, Volumediff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''.format(symbol=symbol))
+                cur.execute(new_entry, (current_time_no_seconds, open_price, high_price, low_price, close_price, volume, total_volume,daily_high, watchlist_flag, volume_diff))
+                conn.commit()
+                conn.close()
+
+        except sqlite3.OperationalError as e:
+            print(e, 'still updating db')
+            watchlist_flag = 0
+            volume_diff = 0
+            conn = sqlite3.connect(f'C:/Users/user/PycharmProjects/Gringottsv4/stock_databases/stock_bar_databases/{symbol}.db'.format(symbol=symbol))
+            cur = conn.cursor()
+            new_entry = ('''INSERT OR IGNORE INTO {symbol} (Timestamp, Openprice, Highprice, Lowprice, Closeprice, Volume, Totalvolume, Dailyhigh, Watchlistflag, Volumediff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''.format(
+                symbol=symbol))
+            cur.execute(new_entry, (current_time_no_seconds, open_price, high_price, low_price, close_price, volume, total_volume, daily_high, watchlist_flag, volume_diff))
+            conn.commit()
+            conn.close()
+            pass
+
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+    channel.basic_consume(queue='bar', on_message_callback=callback)
+
+    print(' [*] Waiting for messages. To exit press CTRL+C')
+    channel.start_consuming()
+    
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('Interrupted')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
